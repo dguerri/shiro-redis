@@ -7,25 +7,25 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
 public class RedisManager {
-	
+
 	private String host = "127.0.0.1";
-	
+
 	private int port = 6379;
-	
+
 	// 0 - never expire
 	private int expire = 0;
-	
+
 	//timeout for jedis try to connect to redis server, not expire time! In milliseconds
 	private int timeout = 0;
-	
+
 	private String password = "";
-	
+
 	private static JedisPool jedisPool = null;
-	
-	public RedisManager(){
-		
+
+	public RedisManager() {
+
 	}
-	
+
 	/**
 	 * 初始化方法
 	 */
@@ -41,13 +41,13 @@ public class RedisManager {
 			
 		}
 	}
-	
+
 	/**
 	 * get value from redis
 	 * @param key
 	 * @return
 	 */
-	public byte[] get(byte[] key){
+	public byte[] get(byte[] key) {
 		byte[] value = null;
 		Jedis jedis = jedisPool.getResource();
 		try{
@@ -57,11 +57,12 @@ public class RedisManager {
 		}
 		return value;
 	}
-	
+
 	/**
-	 * set 
+	 * set
 	 * @param key
 	 * @param value
+	 * @param expire
 	 * @return
 	 */
 	public byte[] set(byte[] key,byte[] value){
@@ -76,12 +77,11 @@ public class RedisManager {
 		}
 		return value;
 	}
-	
+
 	/**
-	 * set 
+	 * set
 	 * @param key
 	 * @param value
-	 * @param expire
 	 * @return
 	 */
 	public byte[] set(byte[] key,byte[] value,int expire){
@@ -96,7 +96,7 @@ public class RedisManager {
 		}
 		return value;
 	}
-	
+
 	/**
 	 * del
 	 * @param key
@@ -109,7 +109,7 @@ public class RedisManager {
 			jedisPool.returnResource(jedis);
 		}
 	}
-	
+
 	/**
 	 * flush
 	 */
@@ -121,11 +121,11 @@ public class RedisManager {
 			jedisPool.returnResource(jedis);
 		}
 	}
-	
+
 	/**
 	 * size
 	 */
-	public Long dbSize(){
+	public Long dbSize() {
 		Long dbSize = 0L;
 		Jedis jedis = jedisPool.getResource();
 		try{
@@ -141,7 +141,7 @@ public class RedisManager {
 	 * @param regex
 	 * @return
 	 */
-	public Set<byte[]> keys(String pattern){
+	public Set<byte[]> keys(String pattern) {
 		Set<byte[]> keys = null;
 		Jedis jedis = jedisPool.getResource();
 		try{
@@ -151,7 +151,7 @@ public class RedisManager {
 		}
 		return keys;
 	}
-	
+
 	public String getHost() {
 		return host;
 	}
@@ -191,7 +191,7 @@ public class RedisManager {
 	public void setPassword(String password) {
 		this.password = password;
 	}
-	
-	
-	
+
+
+
 }
