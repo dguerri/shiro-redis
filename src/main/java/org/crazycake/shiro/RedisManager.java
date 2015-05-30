@@ -1,6 +1,10 @@
 package org.crazycake.shiro;
 
+import java.util.ArrayList;
 import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -12,6 +16,8 @@ public class RedisManager {
 
 	private int port = 6379;
 
+	private String siblingHosts = null;
+
 	// 0 - never expire
 	private int expire = 0;
 
@@ -21,24 +27,44 @@ public class RedisManager {
 	private String password = "";
 
 	private static JedisPool jedisPool = null;
+	private static ArrayList<JedisPool> siblingJedisPools = null;
+
+	private static final Logger log = LoggerFactory.getLogger(RedisManager.class);
 
 	public RedisManager() {
 
 	}
 
+	private JedisPool createJedisPool(String host, int port, int timeout, String password) {
+		if (password != null && !"".equals(password)) {
+			return new JedisPool(new JedisPoolConfig(), host, port, timeout, password);
+		} else if (timeout != 0) {
+			return new JedisPool(new JedisPoolConfig(), host, port, timeout);
+		} else {
+			return new JedisPool(new JedisPoolConfig(), host, port);
+		}
+	}
+
 	/**
 	 * 初始化方法
 	 */
-	public void init(){
-		if(jedisPool == null){
-			if(password != null && !"".equals(password)){
-				jedisPool = new JedisPool(new JedisPoolConfig(), host, port, timeout, password);
-			}else if(timeout != 0){
-				jedisPool = new JedisPool(new JedisPoolConfig(), host, port,timeout);
-			}else{
-				jedisPool = new JedisPool(new JedisPoolConfig(), host, port);
+	public void init() {
+		if (jedisPool == null) {
+			jedisPool = createJedisPool(host, port, timeout, password);
+		}
+		if (siblingHosts != null && siblingJedisPools == null) {
+			siblingJedisPools = new ArrayList();
+			int siblingPort;
+			String[] hp;
+			for (String hostPort: siblingHosts.split("[,\\s]+")) {
+				hp = hostPort.trim().split(":", 2);
+				if (hp.length == 2) {
+					siblingPort = Integer.parseInt(hp[1]);
+				} else {
+					siblingPort = port;
+				}
+				siblingJedisPools.add(createJedisPool(hp[0], siblingPort, timeout, password));
 			}
-			
 		}
 	}
 
@@ -58,6 +84,19 @@ public class RedisManager {
 		return value;
 	}
 
+	private void setInPool(JedisPool pool, byte[] key, byte[] value, int expire) throws redis.clients.jedis.exceptions.JedisConnectionException {
+		Jedis jedis = pool.getResource();
+
+		try {
+			jedis.set(key, value);
+			if (expire != 0) {
+				jedis.expire(key, expire);
+		 	}
+		} finally {
+			pool.returnResource(jedis);
+		}
+	}
+
 	/**
 	 * set
 	 * @param key
@@ -65,16 +104,18 @@ public class RedisManager {
 	 * @param expire
 	 * @return
 	 */
-	public byte[] set(byte[] key,byte[] value){
-		Jedis jedis = jedisPool.getResource();
-		try{
-			jedis.set(key,value);
-			if(this.expire != 0){
-				jedis.expire(key, this.expire);
-		 	}
-		}finally{
-			jedisPool.returnResource(jedis);
+	public byte[] set(byte[] key,byte[] value, int expire) throws redis.clients.jedis.exceptions.JedisConnectionException {
+		if (siblingJedisPools != null) {
+			for (JedisPool pool: siblingJedisPools) {
+				try {
+					setInPool(pool, key, value, expire);
+				} catch (redis.clients.jedis.exceptions.JedisConnectionException e) {
+					log.error("Cannot write to a sibling host: " + e);
+				}
+			}
 		}
+
+		setInPool(jedisPool, key, value, this.expire);
 		return value;
 	}
 
@@ -84,41 +125,56 @@ public class RedisManager {
 	 * @param value
 	 * @return
 	 */
-	public byte[] set(byte[] key,byte[] value,int expire){
-		Jedis jedis = jedisPool.getResource();
-		try{
-			jedis.set(key,value);
-			if(expire != 0){
-				jedis.expire(key, expire);
-		 	}
-		}finally{
-			jedisPool.returnResource(jedis);
+	public byte[] set(byte[] key, byte[] value) throws redis.clients.jedis.exceptions.JedisConnectionException {
+		return set(key, value, this.expire);
+	}
+
+	private void delFormPool(JedisPool pool, byte[] key) throws redis.clients.jedis.exceptions.JedisConnectionException {
+		Jedis jedis = pool.getResource();
+		try {
+			jedis.del(key);
+		} finally{
+			pool.returnResource(jedis);
 		}
-		return value;
 	}
 
 	/**
 	 * del
 	 * @param key
 	 */
-	public void del(byte[] key){
-		Jedis jedis = jedisPool.getResource();
-		try{
-			jedis.del(key);
-		}finally{
-			jedisPool.returnResource(jedis);
+	public void del(byte[] key) throws redis.clients.jedis.exceptions.JedisConnectionException {
+		if (siblingJedisPools != null) {
+			for (JedisPool pool: siblingJedisPools) {
+				try {
+					delFormPool(pool, key);
+				} catch (redis.clients.jedis.exceptions.JedisConnectionException e) {
+					log.error("Cannot delete from a sibling host: " + e);
+				}
+			}
+		}
+
+		delFormPool(jedisPool, key);
+	}
+
+	private void flushDBForPool(JedisPool pool) {
+		Jedis jedis = pool.getResource();
+		try {
+			jedis.flushDB();
+		} finally {
+			pool.returnResource(jedis);
 		}
 	}
 
 	/**
 	 * flush
 	 */
-	public void flushDB(){
-		Jedis jedis = jedisPool.getResource();
-		try{
-			jedis.flushDB();
-		}finally{
-			jedisPool.returnResource(jedis);
+	public void flushDB() {
+		flushDBForPool(jedisPool);
+
+		if (siblingJedisPools != null) {
+			for (JedisPool pool: siblingJedisPools) {
+				flushDBForPool(pool);
+			}
 		}
 	}
 
@@ -158,6 +214,14 @@ public class RedisManager {
 
 	public void setHost(String host) {
 		this.host = host;
+	}
+
+	public String getSiblingHosts() {
+		return siblingHosts;
+	}
+
+	public void setSiblingHosts(String hosts) {
+		this.siblingHosts = hosts;
 	}
 
 	public int getPort() {
